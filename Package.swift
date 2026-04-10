@@ -8,12 +8,18 @@ let package = Package(
         .iOS(.v17)
     ],
     products: [
-        .library(name: "SharedSoundCore", targets: ["SharedSoundCore"])
+        .library(name: "SharedSoundCore", targets: ["SharedSoundCore"]),
+        .executable(name: "SharedSoundApp", targets: ["SharedSoundApp"])
     ],
     targets: [
         .target(
             name: "SharedSoundCore",
             path: "Sources/SharedSoundCore"
+        ),
+        .executableTarget(
+            name: "SharedSoundApp",
+            dependencies: ["SharedSoundCore"],
+            path: "Sources/SharedSoundApp"
         ),
         .testTarget(
             name: "SharedSoundCoreTests",
