@@ -96,11 +96,22 @@ public final class ClientSession {
     }
 
     private func openControl(to host: Peer, audioPort: UInt16) {
-        log.log("opening TCP control to \(String(describing: host.endpoint), privacy: .public) audioPort=\(audioPort, privacy: .public)")
+        // Strip the interface from the discovered endpoint. NWBrowser results
+        // include the interface they were seen on, and passing that through
+        // to NWConnection pins the connection to that interface — on macOS 15
+        // this often fails to resolve mDNS, leaving the connection stuck in
+        // `preparing` forever. Re-build the endpoint with `interface: nil`
+        // so the system picks the right path.
+        let cleanEndpoint: NWEndpoint
+        if case let .service(name, type, domain, _) = host.endpoint {
+            cleanEndpoint = .service(name: name, type: type, domain: domain, interface: nil)
+        } else {
+            cleanEndpoint = host.endpoint
+        }
+        log.log("opening TCP control to \(String(describing: cleanEndpoint), privacy: .public) audioPort=\(audioPort, privacy: .public)")
         let params = NWParameters.tcp
-        // Match the host's listener: wifi only, no AWDL.
         params.includePeerToPeer = false
-        let conn = NWConnection(to: host.endpoint, using: params)
+        let conn = NWConnection(to: cleanEndpoint, using: params)
         let channel = ControlChannel(connection: conn, queue: queue)
 
         channel.onStateChange = { [weak self, weak channel] state in
