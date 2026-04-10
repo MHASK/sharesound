@@ -1,5 +1,8 @@
 import Foundation
 import Network
+import os
+
+private let log = Logger(subsystem: "dev.sharesound", category: "host")
 
 /// Host-side session. Owns:
 ///   - the DiscoveryService (so it can re-wire incoming TCP connections)
@@ -84,6 +87,7 @@ public final class HostSession {
     }
 
     private func handleIncoming(_ conn: NWConnection) {
+        log.log("incoming TCP from \(String(describing: conn.endpoint), privacy: .public)")
         let control = ControlChannel(connection: conn, queue: queue)
         let key = ObjectIdentifier(conn)
         pendingByConnection[key] = control
@@ -104,6 +108,7 @@ public final class HostSession {
     private func handleControlMessage(_ msg: ControlMessage, control: ControlChannel, connection: NWConnection) {
         switch msg {
         case .hello(let peerID, let name, let audioPort):
+            log.log("hello from \(name, privacy: .public) peerID=\(peerID.uuidString, privacy: .public) audioPort=\(audioPort, privacy: .public)")
             let remoteHost = remoteHost(from: connection)
             let sender = AudioChannel.Sender(
                 host: remoteHost,

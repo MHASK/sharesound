@@ -1,5 +1,8 @@
 import Foundation
 import Network
+import os
+
+private let log = Logger(subsystem: "dev.sharesound", category: "client")
 
 /// Client-side session.
 ///
@@ -34,6 +37,7 @@ public final class ClientSession {
     }
 
     public func connect(to host: Peer) {
+        log.log("connect → \(host.name, privacy: .public) endpoint=\(String(describing: host.endpoint), privacy: .public)")
         disconnect()
         onStateChange?(.connecting)
 
@@ -92,8 +96,10 @@ public final class ClientSession {
     }
 
     private func openControl(to host: Peer, audioPort: UInt16) {
+        log.log("opening TCP control to \(String(describing: host.endpoint), privacy: .public) audioPort=\(audioPort, privacy: .public)")
         let params = NWParameters.tcp
-        params.includePeerToPeer = true
+        // Match the host's listener: wifi only, no AWDL.
+        params.includePeerToPeer = false
         let conn = NWConnection(to: host.endpoint, using: params)
         let channel = ControlChannel(connection: conn, queue: queue)
 

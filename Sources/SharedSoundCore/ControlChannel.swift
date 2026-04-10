@@ -1,5 +1,8 @@
 import Foundation
 import Network
+import os
+
+private let log = Logger(subsystem: "dev.sharesound", category: "control")
 
 /// One TCP control connection, host or client side. Handles the length-prefix
 /// framing so callers just see whole `ControlMessage` values.
@@ -24,7 +27,9 @@ public final class ControlChannel {
     }
 
     public func start() {
+        log.log("control start, endpoint=\(String(describing: self.connection.endpoint), privacy: .public)")
         connection.stateUpdateHandler = { [weak self] state in
+            log.log("control state: \(String(describing: state), privacy: .public)")
             switch state {
             case .ready:          self?.onStateChange?(.ready)
             case .failed(let e):  self?.onStateChange?(.failed("\(e)"))
