@@ -42,8 +42,8 @@ public final class HostSession {
         discovery.onIncomingConnection = { [weak self] conn in
             self?.handleIncoming(conn)
         }
-        source.onFrame = { [weak self] pcm in
-            self?.queue.async { self?.broadcast(pcm) }
+        source.onFrame = { [weak self] pcm, captureNanos in
+            self?.queue.async { self?.broadcast(pcm, captureNanos: captureNanos) }
         }
     }
 
@@ -88,11 +88,11 @@ public final class HostSession {
 
     // MARK: - Internals
 
-    private func broadcast(_ pcm: Data) {
+    private func broadcast(_ pcm: Data, captureNanos: UInt64) {
         sequence &+= 1
         let packet = AudioPacket(
             sequenceNumber: sequence,
-            hostTimeNanos: 0,
+            hostTimeNanos: captureNanos,
             sampleCount: UInt16(AudioFormat.samplesPerFrame),
             pcm: pcm
         )
@@ -122,6 +122,9 @@ public final class HostSession {
     }
 
     private func handleControlMessage(_ msg: ControlMessage, control: ControlChannel, connection: NWConnection) {
+        // Stamp receive time as early as possible — before any decoding
+        // work — so clients see the tightest possible RTT bound.
+        let receiveNanos = HostClock.nowNanos()
         switch msg {
         case .hello(let peerID, let name, let audioPort):
             log.log("hello from \(name, privacy: .public) peerID=\(peerID.uuidString, privacy: .public) audioPort=\(audioPort, privacy: .public)")
@@ -150,6 +153,17 @@ public final class HostSession {
 
         case .welcome:
             break   // hosts shouldn't receive welcome
+
+        case .timeSyncRequest(let t0):
+            // Reply with the host's receive + send stamps. Keep the
+            // compute window between these two reads as small as
+            // possible; the delta is the irreducible host-side processing
+            // latency that the client will factor out.
+            let sendNanos = HostClock.nowNanos()
+            control.send(.timeSyncResponse(t0: t0, t1: receiveNanos, t2: sendNanos))
+
+        case .timeSyncResponse:
+            break   // hosts shouldn't receive responses
         }
     }
 

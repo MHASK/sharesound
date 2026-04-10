@@ -23,11 +23,26 @@ public enum ControlMessage: Codable, Sendable {
     /// Either side, graceful disconnect.
     case bye
 
+    /// Client → host. NTP-style round-trip probe used to discover the
+    /// `host_clock − client_clock` offset. `t0` is the client's monotonic
+    /// nanosecond timestamp at send.
+    case timeSyncRequest(t0: UInt64)
+
+    /// Host → client, reply to `timeSyncRequest`. Carries the client's
+    /// original `t0`, plus the host's monotonic nanoseconds measured at
+    /// request receive (`t1`) and response send (`t2`). Client computes:
+    ///
+    ///   rtt    = (t3 - t0) - (t2 - t1)
+    ///   offset = ((t1 - t0) + (t2 - t3)) / 2    // host − client
+    case timeSyncResponse(t0: UInt64, t1: UInt64, t2: UInt64)
+
     // Placeholder keyed coding — swap to a discriminator if this grows.
-    private enum Kind: String, Codable { case hello, welcome, bye }
+    private enum Kind: String, Codable {
+        case hello, welcome, bye, timeSyncRequest, timeSyncResponse
+    }
 
     private enum CodingKeys: String, CodingKey {
-        case kind, peerID, name, audioPort, hostID
+        case kind, peerID, name, audioPort, hostID, t0, t1, t2
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -44,6 +59,14 @@ public enum ControlMessage: Codable, Sendable {
             try c.encode(name, forKey: .name)
         case .bye:
             try c.encode(Kind.bye, forKey: .kind)
+        case .timeSyncRequest(let t0):
+            try c.encode(Kind.timeSyncRequest, forKey: .kind)
+            try c.encode(t0, forKey: .t0)
+        case .timeSyncResponse(let t0, let t1, let t2):
+            try c.encode(Kind.timeSyncResponse, forKey: .kind)
+            try c.encode(t0, forKey: .t0)
+            try c.encode(t1, forKey: .t1)
+            try c.encode(t2, forKey: .t2)
         }
     }
 
@@ -63,6 +86,14 @@ public enum ControlMessage: Codable, Sendable {
             )
         case .bye:
             self = .bye
+        case .timeSyncRequest:
+            self = .timeSyncRequest(t0: try c.decode(UInt64.self, forKey: .t0))
+        case .timeSyncResponse:
+            self = .timeSyncResponse(
+                t0: try c.decode(UInt64.self, forKey: .t0),
+                t1: try c.decode(UInt64.self, forKey: .t1),
+                t2: try c.decode(UInt64.self, forKey: .t2)
+            )
         }
     }
 }
@@ -101,7 +132,7 @@ public enum ControlFrame {
 /// Header layout (big-endian):
 ///   offset  size  field
 ///      0     4    sequenceNumber (UInt32)         — detect loss / reorder
-///      4     8    hostTimeNanos  (UInt64)         — reserved for M4 sync
+///      4     8    hostTimeNanos  (UInt64)         — host's monotonic ns at capture
 ///     12     2    sampleCount    (UInt16)         — samples *per channel*
 ///
 /// Channel count and sample rate are implicit — negotiated at session start,

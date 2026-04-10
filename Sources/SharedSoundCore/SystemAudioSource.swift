@@ -17,7 +17,10 @@ private let log = Logger(subsystem: "dev.sharesound", category: "sysaudio")
 /// Emits `onFrame` with `AudioFormat.samplesPerFrame` interleaved Float32
 /// stereo frames, same contract as the old MicSource.
 public final class SystemAudioSource: NSObject, @unchecked Sendable {
-    public var onFrame: ((Data) -> Void)?
+    /// Called with a full wire frame and the host-capture timestamp (in
+    /// the host's monotonic nanosecond clock) of the *first* sample in
+    /// the frame.
+    public var onFrame: ((Data, UInt64) -> Void)?
 
     private let queue = DispatchQueue(label: "sharedsound.sysaudio")
     private var stream: SCStream?
@@ -26,6 +29,14 @@ public final class SystemAudioSource: NSObject, @unchecked Sendable {
     /// Accumulates interleaved Float32 stereo samples until we have a full
     /// wire frame. Mutated only on `queue`.
     private var frameBuffer = [Float]()
+
+    /// Capture timestamp (ns) of the sample currently sitting at index 0
+    /// of `frameBuffer`. Advances by `nsPerSample` each time we emit a
+    /// wire frame.
+    private var frameBufferStartNanos: UInt64 = 0
+
+    private static let nsPerSample: Double =
+        1_000_000_000.0 / Double(AudioFormat.sampleRate)
 
     public override init() {
         super.init()
@@ -88,6 +99,24 @@ public final class SystemAudioSource: NSObject, @unchecked Sendable {
 
     // Called on `queue`.
     fileprivate func handleAudioSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
+        // PTS of the first sample in *this* chunk, in the host clock's
+        // nanosecond domain. CMClock.hostTimeClock is mach_absolute_time
+        // expressed as seconds, so CMTimeGetSeconds · 1e9 gives us a
+        // directly-comparable `HostClock.nowNanos()` value.
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        let chunkStartNanos: UInt64
+        if pts.isValid && !pts.isIndefinite {
+            chunkStartNanos = UInt64(max(0, CMTimeGetSeconds(pts) * 1_000_000_000))
+        } else {
+            chunkStartNanos = HostClock.nowNanos()
+        }
+        // If the frame buffer is currently empty, anchor its start time
+        // to the new chunk. Otherwise we keep the existing anchor and
+        // trust that incoming chunks are contiguous (SCStream is).
+        if frameBuffer.isEmpty {
+            frameBufferStartNanos = chunkStartNanos
+        }
+
         var blockBuffer: CMBlockBuffer?
         var ablSize = 0
         CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
@@ -155,11 +184,14 @@ public final class SystemAudioSource: NSObject, @unchecked Sendable {
 
     private func emitWholeFrames() {
         let samplesPerWireFrame = AudioFormat.samplesPerFrame * Int(AudioFormat.channelCount)
+        let nsPerFrame = UInt64(Double(AudioFormat.samplesPerFrame) * Self.nsPerSample)
         while frameBuffer.count >= samplesPerWireFrame {
             let chunk = Array(frameBuffer.prefix(samplesPerWireFrame))
             frameBuffer.removeFirst(samplesPerWireFrame)
             let data = chunk.withUnsafeBufferPointer { Data(buffer: $0) }
-            onFrame?(data)
+            let captureNanos = frameBufferStartNanos
+            frameBufferStartNanos &+= nsPerFrame
+            onFrame?(data, captureNanos)
         }
     }
 }

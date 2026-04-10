@@ -3,9 +3,15 @@ import AVFoundation
 
 /// Schedules incoming PCM frames onto an AVAudioPlayerNode.
 ///
-/// M2 version: no jitter buffer, no clock sync. Packets are scheduled the
-/// moment they arrive. Expect pops under wifi jitter — M4 fixes this with a
-/// proper buffer and scheduled host-time playback.
+/// Playback is **clock-synchronised**: each buffer is scheduled with an
+/// explicit `AVAudioTime(hostTime:)` derived from the host's capture
+/// timestamp translated into this client's monotonic clock (see
+/// `TimeSync` + `ClientSession.handleAudioPacket`). That gives:
+///
+///   * fixed end-to-end latency (no queue buildup from clock drift),
+///   * sample-accurate multi-device synchronisation (all clients playing
+///     the same host sample at the same wall-clock instant),
+///   * automatic drop of packets that arrive too late to render.
 public final class AudioPlayer {
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
@@ -36,7 +42,12 @@ public final class AudioPlayer {
         engine.stop()
     }
 
-    public func schedule(_ packet: AudioPacket) {
+    /// Schedule a packet to render at the given mach host-time (ticks in
+    /// this device's monotonic clock). The caller is responsible for
+    /// computing the play-time via `TimeSync`. If `atHostTime` is nil,
+    /// the buffer is enqueued immediately (legacy/free-running mode —
+    /// only used by tests).
+    public func schedule(_ packet: AudioPacket, atHostTime: UInt64? = nil) {
         let frameCapacity = AVAudioFrameCount(packet.sampleCount)
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCapacity) else {
             return
@@ -56,6 +67,12 @@ public final class AudioPlayer {
                 }
             }
         }
-        player.scheduleBuffer(buffer, completionHandler: nil)
+
+        if let ticks = atHostTime {
+            let when = AVAudioTime(hostTime: ticks)
+            player.scheduleBuffer(buffer, at: when, options: [], completionHandler: nil)
+        } else {
+            player.scheduleBuffer(buffer, completionHandler: nil)
+        }
     }
 }
