@@ -13,3 +13,10 @@ Package.resolved
 *.perspectivev3
 .idea/
 .vscode/
+
+# Aura local state
+.aura/
+.gemini/
+.mcp.json
+CLAUDE.md
+GEMINI.md

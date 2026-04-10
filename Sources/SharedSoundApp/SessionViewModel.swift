@@ -26,7 +26,23 @@ final class SessionViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] newPeers in
                 self?.peers = newPeers
+                self?.maybeAutoConnect()
             }
+    }
+
+    /// CI / headless escape hatch: when launched with
+    /// `SHAREDSOUND_AUTO_CONNECT=1` we automatically connect to the first
+    /// discovered host without waiting for a UI tap. Lets a Claude session
+    /// drive the connect flow on a Mac with no human at the keyboard.
+    private var didAutoConnect = false
+    private func maybeAutoConnect() {
+        guard !didAutoConnect,
+              role == .client,
+              ProcessInfo.processInfo.environment["SHAREDSOUND_AUTO_CONNECT"] == "1",
+              let firstHost = peers.first(where: { $0.role == .host })
+        else { return }
+        didAutoConnect = true
+        connect(to: firstHost)
     }
 
     // Host state
