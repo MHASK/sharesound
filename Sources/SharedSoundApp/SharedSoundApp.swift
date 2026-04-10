@@ -23,7 +23,8 @@ struct SharedSoundApp: App {
         WindowGroup("SharedSound") {
             ContentView()
                 .environmentObject(session)
-                .frame(minWidth: 420, minHeight: 480)
+                .frame(minWidth: 520, minHeight: 680)
+                .preferredColorScheme(.dark)
                 .task { session.start() }
         }
     }
