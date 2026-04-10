@@ -37,7 +37,7 @@ public final class ClientSession {
     }
 
     public func connect(to host: Peer) {
-        log.log("connect → \(host.name, privacy: .public) endpoint=\(String(describing: host.endpoint), privacy: .public)")
+        log.log("connect → \(host.name, privacy: .public) at \(host.host, privacy: .public):\(host.port, privacy: .public)")
         disconnect()
         onStateChange?(.connecting)
 
@@ -96,22 +96,14 @@ public final class ClientSession {
     }
 
     private func openControl(to host: Peer, audioPort: UInt16) {
-        // Strip the interface from the discovered endpoint. NWBrowser results
-        // include the interface they were seen on, and passing that through
-        // to NWConnection pins the connection to that interface — on macOS 15
-        // this often fails to resolve mDNS, leaving the connection stuck in
-        // `preparing` forever. Re-build the endpoint with `interface: nil`
-        // so the system picks the right path.
-        let cleanEndpoint: NWEndpoint
-        if case let .service(name, type, domain, _) = host.endpoint {
-            cleanEndpoint = .service(name: name, type: type, domain: domain, interface: nil)
-        } else {
-            cleanEndpoint = host.endpoint
-        }
-        log.log("opening TCP control to \(String(describing: cleanEndpoint), privacy: .public) audioPort=\(audioPort, privacy: .public)")
+        log.log("opening TCP control to \(host.host, privacy: .public):\(host.port, privacy: .public) audioPort=\(audioPort, privacy: .public)")
         let params = NWParameters.tcp
         params.includePeerToPeer = false
-        let conn = NWConnection(to: cleanEndpoint, using: params)
+        let conn = NWConnection(
+            host: NWEndpoint.Host(host.host),
+            port: NWEndpoint.Port(rawValue: host.port) ?? .any,
+            using: params
+        )
         let channel = ControlChannel(connection: conn, queue: queue)
 
         channel.onStateChange = { [weak self, weak channel] state in

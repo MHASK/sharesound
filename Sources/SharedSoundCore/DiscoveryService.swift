@@ -27,6 +27,8 @@ public final class DiscoveryService {
         static let name    = "name"
         static let role    = "role"
         static let version = "v"
+        static let host    = "h"
+        static let port    = "p"
     }
 
     public let localPeerID: UUID
@@ -67,29 +69,40 @@ public final class DiscoveryService {
     // MARK: - Advertise
 
     private func startAdvertising() throws {
-        let txt: [String: String] = [
-            TXTKey.id: localPeerID.uuidString,
-            TXTKey.name: localName,
-            TXTKey.role: role.rawValue,
-            TXTKey.version: Self.protocolVersion
-        ]
-        let txtRecord = NWTXTRecord(txt)
-
-        // Port 0 = let the OS pick. The real audio/control ports are negotiated
-        // later; discovery just needs *a* listener for Bonjour registration.
         let params = NWParameters.tcp
-        params.includePeerToPeer = true
+        params.includePeerToPeer = false
         let listener = try NWListener(using: params, on: .any)
-        listener.service = NWListener.Service(
-            name: localPeerID.uuidString,    // globally unique per launch
-            type: Self.serviceType,
-            txtRecord: txtRecord
-        )
+
         listener.newConnectionHandler = { [weak self] conn in
             if let handler = self?.onIncomingConnection {
                 handler(conn)
             } else {
                 conn.cancel()
+            }
+        }
+
+        // The TXT record needs the listener's actual port, which isn't
+        // known until the listener reaches `.ready`. Publish the Bonjour
+        // service then, with host:port baked in.
+        listener.stateUpdateHandler = { [weak self, weak listener] state in
+            guard let self, let listener else { return }
+            log.log("listener state: \(String(describing: state), privacy: .public)")
+            if case .ready = state, let p = listener.port?.rawValue {
+                let host = LocalAddress.ipv4() ?? "0.0.0.0"
+                let txt: [String: String] = [
+                    TXTKey.id: self.localPeerID.uuidString,
+                    TXTKey.name: self.localName,
+                    TXTKey.role: self.role.rawValue,
+                    TXTKey.version: Self.protocolVersion,
+                    TXTKey.host: host,
+                    TXTKey.port: String(p)
+                ]
+                listener.service = NWListener.Service(
+                    name: self.localPeerID.uuidString,
+                    type: Self.serviceType,
+                    txtRecord: NWTXTRecord(txt)
+                )
+                log.log("advertising \(host, privacy: .public):\(p, privacy: .public) as \(self.role.rawValue, privacy: .public)")
             }
         }
         listener.start(queue: queue)
@@ -131,33 +144,28 @@ public final class DiscoveryService {
             // Filter ourselves out.
             if serviceName == localPeerID.uuidString { continue }
 
-            // Try to read TXT. NWBrowser sometimes delivers a result before
-            // the TXT record arrives (metadata comes back as .none). Fall
-            // back to the service name as a synthetic id so the peer still
-            // shows up — we upgrade the entry once a later browse update
-            // brings TXT along.
-            let peer: Peer
-            if case let .bonjour(txt) = result.metadata,
-               let idStr = txt[TXTKey.id],
-               let id = UUID(uuidString: idStr),
-               let displayName = txt[TXTKey.name],
-               let roleStr = txt[TXTKey.role],
-               let role = Peer.Role(rawValue: roleStr) {
-                peer = Peer(id: id, name: displayName, role: role,
-                            serviceName: serviceName, endpoint: result.endpoint)
-            } else {
-                log.log("result without TXT, fallback: \(serviceName, privacy: .public) meta=\(String(describing: result.metadata), privacy: .public)")
-                // Deterministic UUID from the service name so repeated fallbacks dedupe.
-                let fallbackID = Self.deterministicUUID(from: serviceName)
-                peer = Peer(
-                    id: fallbackID,
-                    name: serviceName.prefix(8).description,
-                    role: .host,                  // assume host so clients can connect
-                    serviceName: serviceName,
-                    endpoint: result.endpoint
-                )
+            // We require TXT now — without it we have no host:port and
+            // can't connect. NWBrowser delivers TXT in a follow-up update if
+            // it isn't ready yet, so silently skip and wait for the next
+            // results-changed callback.
+            guard case let .bonjour(txt) = result.metadata,
+                  let idStr = txt[TXTKey.id],
+                  let id = UUID(uuidString: idStr),
+                  let displayName = txt[TXTKey.name],
+                  let roleStr = txt[TXTKey.role],
+                  let role = Peer.Role(rawValue: roleStr),
+                  let host = txt[TXTKey.host],
+                  let portStr = txt[TXTKey.port],
+                  let port = UInt16(portStr)
+            else {
+                log.log("skip (no TXT yet): \(serviceName, privacy: .public)")
+                continue
             }
-            log.log("peer: \(peer.name, privacy: .public) role=\(peer.role.rawValue, privacy: .public)")
+            let peer = Peer(
+                id: id, name: displayName, role: role,
+                serviceName: serviceName, host: host, port: port
+            )
+            log.log("peer: \(peer.name, privacy: .public) role=\(peer.role.rawValue, privacy: .public) at \(host, privacy: .public):\(port, privacy: .public)")
             onPeerFound?(peer)
         }
 
@@ -170,21 +178,4 @@ public final class DiscoveryService {
     }
 
     private var lastSeenServiceNames: Set<String> = []
-
-    /// Stable UUID from a string via UUIDv5-style name hashing. Used as a
-    /// fallback peer id when TXT record isn't yet available.
-    private static func deterministicUUID(from name: String) -> UUID {
-        var hasher = Hasher()
-        hasher.combine(name)
-        let h = UInt64(bitPattern: Int64(hasher.finalize()))
-        var bytes = [UInt8](repeating: 0, count: 16)
-        for i in 0..<8 { bytes[i] = UInt8((h >> (i * 8)) & 0xff) }
-        for i in 8..<16 { bytes[i] = UInt8((UInt64(name.count) >> ((i - 8) * 8)) & 0xff) }
-        return UUID(uuid: (
-            bytes[0], bytes[1], bytes[2], bytes[3],
-            bytes[4], bytes[5], bytes[6], bytes[7],
-            bytes[8], bytes[9], bytes[10], bytes[11],
-            bytes[12], bytes[13], bytes[14], bytes[15]
-        ))
-    }
 }

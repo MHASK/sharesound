@@ -20,15 +20,20 @@ public struct Peer: Identifiable, Hashable, @unchecked Sendable {
     /// Bonjour service name — opaque, used for tracking losses.
     public let serviceName: String
 
-    /// Resolvable network endpoint. Pass straight to `NWConnection(to:using:)`.
-    public let endpoint: NWEndpoint
+    /// Direct host:port the peer is listening on. Read from TXT so the
+    /// connect path doesn't need to resolve a Bonjour service endpoint —
+    /// `NWConnection.hostPort` is far more reliable across macOS/iOS than
+    /// `NWConnection(to: .service(...))`.
+    public let host: String
+    public let port: UInt16
 
-    public init(id: UUID, name: String, role: Role, serviceName: String, endpoint: NWEndpoint) {
+    public init(id: UUID, name: String, role: Role, serviceName: String, host: String, port: UInt16) {
         self.id = id
         self.name = name
         self.role = role
         self.serviceName = serviceName
-        self.endpoint = endpoint
+        self.host = host
+        self.port = port
     }
 
     // Identity is by `id` only — two results for the same device on different

@@ -16,7 +16,7 @@ final class PeerRegistryTests: XCTestCase {
             name: name,
             role: role,
             serviceName: serviceName,
-            endpoint: .hostPort(host: "localhost", port: 1234)
+            host: "192.168.0.1", port: 1234
         )
     }
 
