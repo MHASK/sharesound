@@ -98,7 +98,7 @@ struct ContentView: View {
                 .padding(.horizontal)
                 .padding(.top, 8)
 
-            if session.registry.peers.isEmpty {
+            if session.peers.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "wifi")
                         .font(.system(size: 44))
@@ -108,7 +108,7 @@ struct ContentView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(session.registry.peers) { peer in
+                List(session.peers) { peer in
                     HStack {
                         Image(systemName: peer.role == .host ? "hifispeaker.fill" : "iphone")
                         VStack(alignment: .leading) {

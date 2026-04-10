@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import SharedSoundCore
 
 #if os(macOS)
@@ -10,8 +11,23 @@ import UIKit
 @MainActor
 final class SessionViewModel: ObservableObject {
     @Published var role: Peer.Role = .client
-    @Published var registry = PeerRegistry()
+    @Published var peers: [Peer] = []
     @Published var isRunning = false
+
+    // Internal — UI binds to `peers` above. We re-emit registry changes
+    // through the parent so SwiftUI actually sees them; @Published on a
+    // nested ObservableObject only fires when the *reference* changes,
+    // not when the reference's contents change.
+    private let registry = PeerRegistry()
+    private var registryCancellable: AnyCancellable?
+
+    init() {
+        registryCancellable = registry.$peers
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] newPeers in
+                self?.peers = newPeers
+            }
+    }
 
     // Host state
     @Published var hostConnectedClients: [String] = []
@@ -93,6 +109,7 @@ final class SessionViewModel: ObservableObject {
 
         discovery?.stop()
         registry.clear()
+        peers = []
         hostConnectedClients = []
         hostIsPlaying = false
         connectedPeerID = nil
