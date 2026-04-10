@@ -12,11 +12,15 @@ public final class AudioPlayer {
     private let format: AVAudioFormat
 
     public init() {
+        // AVAudioEngine.mainMixerNode rejects interleaved input formats and
+        // raises an NSException at connect time. Use a non-interleaved
+        // (planar) format here even though the wire protocol carries
+        // interleaved samples — we de-interleave in `schedule(_:)`.
         self.format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: AudioFormat.sampleRate,
             channels: AudioFormat.channelCount,
-            interleaved: true
+            interleaved: false
         )!
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: format)
@@ -38,13 +42,19 @@ public final class AudioPlayer {
             return
         }
         buffer.frameLength = frameCapacity
-        // Interleaved Float32 stereo → channelData[0] points at the
-        // interleaved block of length frameCount * channelCount.
-        guard let dst = buffer.floatChannelData?[0] else { return }
+        guard let channelData = buffer.floatChannelData else { return }
+        let frames = Int(frameCapacity)
+        let channels = Int(AudioFormat.channelCount)
+
         packet.pcm.withUnsafeBytes { raw in
             guard let src = raw.baseAddress?.assumingMemoryBound(to: Float.self) else { return }
-            let count = Int(frameCapacity) * Int(AudioFormat.channelCount)
-            dst.update(from: src, count: count)
+            // De-interleave [L0,R0,L1,R1,...] into channelData[0]=L, [1]=R.
+            for ch in 0..<channels {
+                let dst = channelData[ch]
+                for i in 0..<frames {
+                    dst[i] = src[i * channels + ch]
+                }
+            }
         }
         player.scheduleBuffer(buffer, completionHandler: nil)
     }
