@@ -44,7 +44,15 @@ One device per listener. Per-device volume is independent. No fighting over one 
 ## Running it (Mac, development)
 
 ```bash
-swift run SharedSoundApp
+./scripts/make-app.sh
+```
+
+This builds the binary and wraps it in a proper `SharedSound.app` bundle with the Info.plist keys macOS 15+ requires for Bonjour discovery (`NSBonjourServices`, `NSLocalNetworkUsageDescription`). Running `swift run SharedSoundApp` directly **will not work** for discovery on recent macOS — NWBrowser silently returns empty without those Info.plist keys.
+
+First launch on each Mac will prompt for **Local Network** access — click **Allow**. If you miss the prompt, reset with:
+
+```bash
+tccutil reset LocalNetwork dev.sharesound.SharedSound
 ```
 
 Run it on two Macs on the same Wi-Fi. On one:
