@@ -243,6 +243,9 @@ public final class HostSession {
                     startCapture()
                 }
             }
+
+        case .unknown:
+            log.log("ignoring unknown control message from \(String(describing: connection.endpoint), privacy: .public)")
         }
     }
 

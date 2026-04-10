@@ -42,7 +42,12 @@ public enum ControlMessage: Codable, Sendable {
     /// playable on every listener — no initial silence.
     case syncReady(peerID: UUID)
 
-    // Placeholder keyed coding — swap to a discriminator if this grows.
+    /// Sentinel for forward-compatible decoding: a frame with a `kind`
+    /// we don't recognise (e.g. older peer, newer peer) is surfaced as
+    /// `.unknown` so the caller can simply ignore it instead of the
+    /// whole session tearing down on a decode throw. Never sent.
+    case unknown
+
     private enum Kind: String, Codable {
         case hello, welcome, bye, timeSyncRequest, timeSyncResponse, syncReady
     }
@@ -76,12 +81,23 @@ public enum ControlMessage: Codable, Sendable {
         case .syncReady(let peerID):
             try c.encode(Kind.syncReady, forKey: .kind)
             try c.encode(peerID, forKey: .peerID)
+        case .unknown:
+            // Never emitted on the wire.
+            break
         }
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        switch try c.decode(Kind.self, forKey: .kind) {
+        // Decode `kind` as a raw String first so an unrecognised value
+        // (older peer, newer peer, corrupted byte) becomes `.unknown`
+        // instead of throwing and tearing down the whole session.
+        let rawKind = try c.decode(String.self, forKey: .kind)
+        guard let kind = Kind(rawValue: rawKind) else {
+            self = .unknown
+            return
+        }
+        switch kind {
         case .hello:
             self = .hello(
                 peerID: try c.decode(UUID.self, forKey: .peerID),

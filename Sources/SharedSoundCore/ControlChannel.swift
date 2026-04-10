@@ -79,6 +79,7 @@ public final class ControlChannel {
                 guard let msg = try ControlFrame.decode(from: &rxBuffer) else { return }
                 onMessage?(msg)
             } catch {
+                log.log("control decode error: \(String(describing: error), privacy: .public) — cancelling")
                 onStateChange?(.failed("decode: \(error)"))
                 connection.cancel()
                 return
