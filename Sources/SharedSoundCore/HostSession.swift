@@ -19,6 +19,11 @@ public final class HostSession {
 
     public var onClientsChanged: (([ConnectedClient]) -> Void)?
 
+    /// Fires on main when the host transitions in/out of "waiting for
+    /// clients to sync" state. True between `startPlaying()` and the
+    /// moment every connected client has reported `.syncReady`.
+    public var onSyncingChanged: ((Bool) -> Void)?
+
     private let hostID: UUID
     private let hostName: String
     private let discovery: DiscoveryService
@@ -29,7 +34,16 @@ public final class HostSession {
     private var clients: [UUID: ConnectedClient] = [:]
     private var pendingByConnection: [ObjectIdentifier: ControlChannel] = [:]
     private var isPlaying = false
+    private var captureStarted = false
+    private var waitingForSync = false
+    private var readyPeers: Set<UUID> = []
+    private var syncTimeoutWork: DispatchWorkItem?
     private var sequence: UInt32 = 0
+
+    /// Max time we'll hold the host back waiting on a client to sync
+    /// before starting capture anyway. Covers the case of a misbehaving
+    /// or very-slow client that never sends `.syncReady`.
+    private let syncGateTimeoutNanos: Int = 3_000  // milliseconds
 
     /// URL to share with browser guests once `startPlaying()` has been
     /// called. nil before the web server is up.
@@ -50,13 +64,8 @@ public final class HostSession {
     public func startPlaying() {
         guard !isPlaying else { return }
         isPlaying = true
-        do {
-            try source.start()
-        } catch {
-            log.log("mic start failed: \(String(describing: error), privacy: .public)")
-            isPlaying = false
-            return
-        }
+
+        // Web server spins up immediately — browsers don't need sync.
         do {
             try webServer.start()
             let ip = LocalAddress.ipv4() ?? "localhost"
@@ -65,14 +74,73 @@ public final class HostSession {
         } catch {
             log.log("web server start failed: \(String(describing: error), privacy: .public)")
         }
+
+        // Native clients need the time-sync filter to lock before they
+        // can schedule audio. Wait until every currently-connected
+        // client has sent `.syncReady`, then start capture so the first
+        // sample the user hears is actually live everywhere.
+        let pending = Set(clients.keys).subtracting(readyPeers)
+        if pending.isEmpty {
+            startCapture()
+        } else {
+            waitingForSync = true
+            emitSyncingChanged(true)
+            log.log("waiting on \(pending.count, privacy: .public) client(s) to sync before starting capture")
+            scheduleSyncTimeout()
+        }
     }
 
     public func stopPlaying() {
         guard isPlaying else { return }
-        source.stop()
+        if captureStarted {
+            source.stop()
+            captureStarted = false
+        }
         webServer.stop()
         webURL = nil
         isPlaying = false
+        if waitingForSync {
+            waitingForSync = false
+            emitSyncingChanged(false)
+        }
+        syncTimeoutWork?.cancel()
+        syncTimeoutWork = nil
+    }
+
+    private func startCapture() {
+        guard !captureStarted else { return }
+        do {
+            try source.start()
+            captureStarted = true
+            log.log("capture started")
+        } catch {
+            log.log("capture start failed: \(String(describing: error), privacy: .public)")
+            isPlaying = false
+            return
+        }
+        if waitingForSync {
+            waitingForSync = false
+            emitSyncingChanged(false)
+        }
+        syncTimeoutWork?.cancel()
+        syncTimeoutWork = nil
+    }
+
+    private func scheduleSyncTimeout() {
+        syncTimeoutWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.waitingForSync else { return }
+            log.log("sync gate timed out — starting capture anyway")
+            self.startCapture()
+        }
+        syncTimeoutWork = work
+        queue.asyncAfter(deadline: .now() + .milliseconds(syncGateTimeoutNanos), execute: work)
+    }
+
+    private func emitSyncingChanged(_ syncing: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            self?.onSyncingChanged?(syncing)
+        }
     }
 
     public func shutdown() {
@@ -164,6 +232,17 @@ public final class HostSession {
 
         case .timeSyncResponse:
             break   // hosts shouldn't receive responses
+
+        case .syncReady(let peerID):
+            guard clients[peerID] != nil else { return }
+            readyPeers.insert(peerID)
+            log.log("client \(peerID.uuidString, privacy: .public) syncReady (\(self.readyPeers.count, privacy: .public)/\(self.clients.count, privacy: .public))")
+            if waitingForSync {
+                let pending = Set(clients.keys).subtracting(readyPeers)
+                if pending.isEmpty {
+                    startCapture()
+                }
+            }
         }
     }
 
@@ -180,7 +259,16 @@ public final class HostSession {
         if let victimID = clients.first(where: { _, v in ObjectIdentifier(v.control as AnyObject) == ObjectIdentifier(conn) })?.key {
             clients[victimID]?.audio.stop()
             clients.removeValue(forKey: victimID)
+            readyPeers.remove(victimID)
             emitClients()
+            // If we were waiting on this peer specifically, releasing it
+            // may unblock the gate.
+            if waitingForSync {
+                let pending = Set(clients.keys).subtracting(readyPeers)
+                if pending.isEmpty {
+                    startCapture()
+                }
+            }
         }
     }
 

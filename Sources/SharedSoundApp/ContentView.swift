@@ -142,6 +142,12 @@ private struct RolePicker: View {
 private struct HostPanel: View {
     @EnvironmentObject var session: SessionViewModel
 
+    var playLabel: String {
+        if session.hostIsSyncing { return "Syncing listeners…" }
+        if session.hostIsPlaying { return "Sharing system audio" }
+        return "Share System Audio"
+    }
+
     var body: some View {
         VStack(spacing: 20) {
             PlayButton(
@@ -150,9 +156,10 @@ private struct HostPanel: View {
             )
             .padding(.top, 4)
 
-            Text(session.hostIsPlaying ? "Sharing system audio" : "Share System Audio")
+            Text(playLabel)
                 .font(.system(size: 14, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.7))
+                .foregroundStyle(session.hostIsSyncing ? Color.accentColor : .white.opacity(0.7))
+                .animation(.easeInOut(duration: 0.2), value: session.hostIsSyncing)
 
             if let url = session.hostWebURL {
                 BrowserGuestsCard(url: url)

@@ -48,6 +48,7 @@ final class SessionViewModel: ObservableObject {
     // Host state
     @Published var hostConnectedClients: [String] = []
     @Published var hostIsPlaying = false
+    @Published var hostIsSyncing = false
     @Published var hostWebURL: String?
 
     // Client state
@@ -131,6 +132,7 @@ final class SessionViewModel: ObservableObject {
         peers = []
         hostConnectedClients = []
         hostIsPlaying = false
+        hostIsSyncing = false
         hostWebURL = nil
         connectedPeerID = nil
 
@@ -147,6 +149,11 @@ final class SessionViewModel: ObservableObject {
             host.onClientsChanged = { [weak self] clients in
                 Task { @MainActor in
                     self?.hostConnectedClients = clients.map(\.name)
+                }
+            }
+            host.onSyncingChanged = { [weak self] syncing in
+                Task { @MainActor in
+                    self?.hostIsSyncing = syncing
                 }
             }
             hostSession = host

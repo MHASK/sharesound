@@ -32,12 +32,26 @@ public final class ClientSession {
     private let player = AudioPlayer()
     private let timeSync = TimeSync()
     private var syncTimer: DispatchSourceTimer?
+    private var didReportSyncReady = false
 
     /// Target end-to-end latency from capture on host to output on
     /// client, in nanoseconds. Packets that can't be scheduled to land
-    /// at least this far in the future are dropped. 80 ms is tight for
-    /// music playback while still absorbing typical wifi jitter.
-    public static let targetLatencyNanos: UInt64 = 80_000_000
+    /// at least this far in the future are dropped.
+    ///
+    /// Floor breakdown on a typical LAN:
+    ///   * SCStream capture chunk           ~10 ms
+    ///   * Host broadcast + net (wifi)       ~3 ms
+    ///   * AVAudioEngine render lookahead  ~10 ms
+    ///   * Jitter headroom                 ~12 ms
+    ///   -------------------------------------
+    ///   total                              ~35 ms
+    ///
+    /// Because the host gates capture on every connected client having
+    /// locked its time-sync filter (`.syncReady`), we don't need extra
+    /// slack to cover first-packet bootstrap. If you hear drops, bump
+    /// this; if you want even tighter sync and can tolerate occasional
+    /// pops, drop it.
+    public static let targetLatencyNanos: UInt64 = 35_000_000
 
     public init(peerID: UUID, localName: String) {
         self.peerID = peerID
@@ -78,6 +92,7 @@ public final class ClientSession {
         syncTimer?.cancel()
         syncTimer = nil
         timeSync.reset()
+        didReportSyncReady = false
         control?.send(.bye)
         control?.close()
         control = nil
@@ -191,6 +206,14 @@ public final class ClientSession {
             case .timeSyncResponse(let t0, let t1, let t2):
                 let t3 = HostClock.nowNanos()
                 self.timeSync.ingest(t0: t0, t1: t1, t2: t2, t3: t3)
+                // Tell the host we're ready as soon as the filter locks
+                // for the first time. Host uses this as a capture gate so
+                // the user hears clients go live in lockstep.
+                if self.timeSync.isLocked && !self.didReportSyncReady {
+                    self.didReportSyncReady = true
+                    self.control?.send(.syncReady(peerID: self.peerID))
+                    log.log("time sync locked, sent syncReady (offset=\(self.timeSync.offsetNanos, privacy: .public)ns rtt=\(self.timeSync.lastRttNanos, privacy: .public)ns)")
+                }
             default:
                 break
             }

@@ -36,9 +36,15 @@ public enum ControlMessage: Codable, Sendable {
     ///   offset = ((t1 - t0) + (t2 - t3)) / 2    // host − client
     case timeSyncResponse(t0: UInt64, t1: UInt64, t2: UInt64)
 
+    /// Client → host, sent exactly once after the client's `TimeSync`
+    /// filter reaches `isLocked`. The host uses this as a gate before
+    /// starting capture so that the first captured sample is actually
+    /// playable on every listener — no initial silence.
+    case syncReady(peerID: UUID)
+
     // Placeholder keyed coding — swap to a discriminator if this grows.
     private enum Kind: String, Codable {
-        case hello, welcome, bye, timeSyncRequest, timeSyncResponse
+        case hello, welcome, bye, timeSyncRequest, timeSyncResponse, syncReady
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -67,6 +73,9 @@ public enum ControlMessage: Codable, Sendable {
             try c.encode(t0, forKey: .t0)
             try c.encode(t1, forKey: .t1)
             try c.encode(t2, forKey: .t2)
+        case .syncReady(let peerID):
+            try c.encode(Kind.syncReady, forKey: .kind)
+            try c.encode(peerID, forKey: .peerID)
         }
     }
 
@@ -94,6 +103,8 @@ public enum ControlMessage: Codable, Sendable {
                 t1: try c.decode(UInt64.self, forKey: .t1),
                 t2: try c.decode(UInt64.self, forKey: .t2)
             )
+        case .syncReady:
+            self = .syncReady(peerID: try c.decode(UUID.self, forKey: .peerID))
         }
     }
 }
