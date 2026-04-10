@@ -1,5 +1,8 @@
 import Foundation
 import Network
+import os
+
+private let log = Logger(subsystem: "dev.sharesound", category: "discovery")
 
 /// Bonjour-based peer discovery over the local network.
 ///
@@ -97,12 +100,18 @@ public final class DiscoveryService {
 
     private func startBrowsing() {
         let params = NWParameters()
-        params.includePeerToPeer = true
+        // Wi-Fi only for now. p2p (AWDL) adds interfaces that sometimes
+        // deliver results without TXT records, which we can't parse.
+        params.includePeerToPeer = false
         let browser = NWBrowser(
             for: .bonjourWithTXTRecord(type: Self.serviceType, domain: nil),
             using: params
         )
+        browser.stateUpdateHandler = { state in
+            log.log("browser state: \(String(describing: state), privacy: .public)")
+        }
         browser.browseResultsChangedHandler = { [weak self] results, _ in
+            log.log("browser results: \(results.count, privacy: .public)")
             self?.handle(results: results)
         }
         browser.start(queue: queue)
@@ -114,6 +123,7 @@ public final class DiscoveryService {
 
         for result in results {
             guard case let .service(name: serviceName, type: _, domain: _, interface: _) = result.endpoint else {
+                log.log("skip non-service endpoint: \(String(describing: result.endpoint), privacy: .public)")
                 continue
             }
             seenServiceNames.insert(serviceName)
@@ -121,21 +131,33 @@ public final class DiscoveryService {
             // Filter ourselves out.
             if serviceName == localPeerID.uuidString { continue }
 
-            guard case let .bonjour(txt) = result.metadata,
-                  let idStr = txt[TXTKey.id],
-                  let id = UUID(uuidString: idStr),
-                  let displayName = txt[TXTKey.name],
-                  let roleStr = txt[TXTKey.role],
-                  let role = Peer.Role(rawValue: roleStr)
-            else { continue }
-
-            let peer = Peer(
-                id: id,
-                name: displayName,
-                role: role,
-                serviceName: serviceName,
-                endpoint: result.endpoint
-            )
+            // Try to read TXT. NWBrowser sometimes delivers a result before
+            // the TXT record arrives (metadata comes back as .none). Fall
+            // back to the service name as a synthetic id so the peer still
+            // shows up — we upgrade the entry once a later browse update
+            // brings TXT along.
+            let peer: Peer
+            if case let .bonjour(txt) = result.metadata,
+               let idStr = txt[TXTKey.id],
+               let id = UUID(uuidString: idStr),
+               let displayName = txt[TXTKey.name],
+               let roleStr = txt[TXTKey.role],
+               let role = Peer.Role(rawValue: roleStr) {
+                peer = Peer(id: id, name: displayName, role: role,
+                            serviceName: serviceName, endpoint: result.endpoint)
+            } else {
+                log.log("result without TXT, fallback: \(serviceName, privacy: .public) meta=\(String(describing: result.metadata), privacy: .public)")
+                // Deterministic UUID from the service name so repeated fallbacks dedupe.
+                let fallbackID = Self.deterministicUUID(from: serviceName)
+                peer = Peer(
+                    id: fallbackID,
+                    name: serviceName.prefix(8).description,
+                    role: .host,                  // assume host so clients can connect
+                    serviceName: serviceName,
+                    endpoint: result.endpoint
+                )
+            }
+            log.log("peer: \(peer.name, privacy: .public) role=\(peer.role.rawValue, privacy: .public)")
             onPeerFound?(peer)
         }
 
@@ -148,4 +170,21 @@ public final class DiscoveryService {
     }
 
     private var lastSeenServiceNames: Set<String> = []
+
+    /// Stable UUID from a string via UUIDv5-style name hashing. Used as a
+    /// fallback peer id when TXT record isn't yet available.
+    private static func deterministicUUID(from name: String) -> UUID {
+        var hasher = Hasher()
+        hasher.combine(name)
+        let h = UInt64(bitPattern: Int64(hasher.finalize()))
+        var bytes = [UInt8](repeating: 0, count: 16)
+        for i in 0..<8 { bytes[i] = UInt8((h >> (i * 8)) & 0xff) }
+        for i in 8..<16 { bytes[i] = UInt8((UInt64(name.count) >> ((i - 8) * 8)) & 0xff) }
+        return UUID(uuid: (
+            bytes[0], bytes[1], bytes[2], bytes[3],
+            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[8], bytes[9], bytes[10], bytes[11],
+            bytes[12], bytes[13], bytes[14], bytes[15]
+        ))
+    }
 }
