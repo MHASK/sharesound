@@ -8,19 +8,23 @@ struct ContentView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            peerList
+            if session.role == .host {
+                hostView
+            } else {
+                clientView
+            }
         }
     }
+
+    // MARK: - Header
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading) {
-                    Text(session.localName)
-                        .font(.headline)
+                    Text(session.localName).font(.headline)
                     Text(session.isRunning ? "Advertising on local network" : "Stopped")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 roleBadge
@@ -47,14 +51,59 @@ struct ContentView: View {
             .clipShape(Capsule())
     }
 
-    private var peerList: some View {
-        Group {
+    // MARK: - Host view
+
+    private var hostView: some View {
+        VStack(spacing: 16) {
+            Button {
+                session.togglePlayback()
+            } label: {
+                Label(
+                    session.hostIsPlaying ? "Stop Sine Wave" : "Play 440Hz Sine Wave",
+                    systemImage: session.hostIsPlaying ? "stop.fill" : "play.fill"
+                )
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(session.hostIsPlaying ? .red : .accentColor)
+
+            GroupBox("Connected clients (\(session.hostConnectedClients.count))") {
+                if session.hostConnectedClients.isEmpty {
+                    Text("Waiting for clients to join…")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(session.hostConnectedClients, id: \.self) { name in
+                            Label(name, systemImage: "iphone")
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
+            Spacer()
+        }
+        .padding()
+    }
+
+    // MARK: - Client view
+
+    private var clientView: some View {
+        VStack(spacing: 0) {
+            Text(session.clientState)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal)
+                .padding(.top, 8)
+
             if session.registry.peers.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "wifi")
                         .font(.system(size: 44))
                         .foregroundStyle(.secondary)
-                    Text("Looking for peers on your Wi-Fi…")
+                    Text("Looking for hosts on your Wi-Fi…")
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -69,6 +118,13 @@ struct ContentView: View {
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
+                        if session.connectedPeerID == peer.id {
+                            Button("Disconnect", action: session.disconnect)
+                                .buttonStyle(.bordered)
+                        } else if peer.role == .host {
+                            Button("Connect") { session.connect(to: peer) }
+                                .buttonStyle(.borderedProminent)
+                        }
                     }
                 }
             }

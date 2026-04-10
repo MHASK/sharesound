@@ -11,6 +11,18 @@ Synchronized multi-device audio across Apple devices on the same Wi-Fi network. 
 - **Any-to-any.** Phone can host for Macs. Mac can host for iPads. Roles are fluid.
 - **Open source.** Apache-2.0.
 
+## Mental model
+
+SharedSound moves audio **between devices**, not directly to speakers. Each device drives its own local output however it likes — built-in speakers, AirPods, Sony XM5s, a wired DAC, whatever is already paired.
+
+So if you want your Sony headphones and your partner's AirPods playing the same thing:
+
+- Your headphones pair to **your Mac** → your Mac hosts.
+- Their AirPods pair to **their iPhone** → their iPhone joins as a client.
+- SharedSound ships audio over Wi-Fi between the two devices; each device handles its own Bluetooth link.
+
+One device per listener. Per-device volume is independent. No fighting over one Mac's Bluetooth bandwidth.
+
 ## Platforms
 
 - macOS 14+ (Sonoma). macOS 14.2+ required for system-audio capture via CoreAudio process taps.
@@ -28,6 +40,24 @@ Synchronized multi-device audio across Apple devices on the same Wi-Fi network. 
 | Playback | `AVAudioEngine` scheduled buffers |
 | System audio capture (Mac) | `CATapDescription` process tap |
 | UI | SwiftUI multiplatform |
+
+## Running it (Mac, development)
+
+```bash
+swift run SharedSoundApp
+```
+
+Run it on two Macs on the same Wi-Fi. On one:
+
+1. Tap **Become Host**.
+2. Tap **Play 440Hz Sine Wave**.
+
+On the other:
+
+1. Leave it in Client mode.
+2. Tap **Connect** next to the discovered host.
+
+You should hear a 440Hz tone from the client Mac's output (AirPods, XM5s, whatever is selected). First Bonjour + incoming connection on macOS will prompt for Local Network permission — allow it.
 
 ## Roadmap
 

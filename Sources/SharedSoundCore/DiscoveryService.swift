@@ -33,7 +33,11 @@ public final class DiscoveryService {
     public var onPeerFound: ((Peer) -> Void)?
     public var onPeerLost: ((String) -> Void)?   // serviceName
 
-    private var listener: NWListener?
+    /// Fires when a remote peer opens a TCP connection to our advertised
+    /// Bonjour service. Host side uses this as the incoming control channel.
+    public var onIncomingConnection: ((NWConnection) -> Void)?
+
+    public private(set) var listener: NWListener?
     private var browser: NWBrowser?
     private let queue = DispatchQueue(label: "sharedsound.discovery")
 
@@ -78,10 +82,12 @@ public final class DiscoveryService {
             type: Self.serviceType,
             txtRecord: txtRecord
         )
-        // We must accept connections or the service won't stay registered,
-        // but at this milestone we just close them immediately.
-        listener.newConnectionHandler = { conn in
-            conn.cancel()
+        listener.newConnectionHandler = { [weak self] conn in
+            if let handler = self?.onIncomingConnection {
+                handler(conn)
+            } else {
+                conn.cancel()
+            }
         }
         listener.start(queue: queue)
         self.listener = listener
@@ -123,7 +129,13 @@ public final class DiscoveryService {
                   let role = Peer.Role(rawValue: roleStr)
             else { continue }
 
-            let peer = Peer(id: id, name: displayName, role: role, serviceName: serviceName)
+            let peer = Peer(
+                id: id,
+                name: displayName,
+                role: role,
+                serviceName: serviceName,
+                endpoint: result.endpoint
+            )
             onPeerFound?(peer)
         }
 
