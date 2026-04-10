@@ -48,6 +48,7 @@ final class SessionViewModel: ObservableObject {
     // Host state
     @Published var hostConnectedClients: [String] = []
     @Published var hostIsPlaying = false
+    @Published var hostWebURL: String?
 
     // Client state
     @Published var clientState: String = "Idle"
@@ -83,9 +84,11 @@ final class SessionViewModel: ObservableObject {
         if hostIsPlaying {
             host.stopPlaying()
             hostIsPlaying = false
+            hostWebURL = nil
         } else {
             host.startPlaying()
             hostIsPlaying = true
+            hostWebURL = host.webURL
         }
     }
 
@@ -128,6 +131,7 @@ final class SessionViewModel: ObservableObject {
         peers = []
         hostConnectedClients = []
         hostIsPlaying = false
+        hostWebURL = nil
         connectedPeerID = nil
 
         let svc = DiscoveryService(localPeerID: localID, localName: localName, role: role)

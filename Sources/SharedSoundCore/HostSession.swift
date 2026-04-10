@@ -7,10 +7,8 @@ private let log = Logger(subsystem: "dev.sharesound", category: "host")
 /// Host-side session. Owns:
 ///   - the DiscoveryService (so it can re-wire incoming TCP connections)
 ///   - the set of connected clients (control + audio sender per client)
-///   - a timer-driven audio source that pushes packets to every client
-///
-/// M2 audio source is a fixed sine generator. M3+ replaces it with a real
-/// capture source.
+///   - a MicSource that pushes captured audio frames to every client
+///   - a WebStreamServer so browsers on the LAN can also listen in
 public final class HostSession {
     public struct ConnectedClient {
         public let peerID: UUID
@@ -25,13 +23,17 @@ public final class HostSession {
     private let hostName: String
     private let discovery: DiscoveryService
     private let queue = DispatchQueue(label: "sharedsound.host")
-    private let source = SineSource()
+    private let source = SystemAudioSource()
+    private let webServer = WebStreamServer()
 
     private var clients: [UUID: ConnectedClient] = [:]
     private var pendingByConnection: [ObjectIdentifier: ControlChannel] = [:]
     private var isPlaying = false
-    private var sendTimer: DispatchSourceTimer?
     private var sequence: UInt32 = 0
+
+    /// URL to share with browser guests once `startPlaying()` has been
+    /// called. nil before the web server is up.
+    public private(set) var webURL: String?
 
     public init(hostID: UUID, hostName: String, discovery: DiscoveryService) {
         self.hostID = hostID
@@ -40,22 +42,36 @@ public final class HostSession {
         discovery.onIncomingConnection = { [weak self] conn in
             self?.handleIncoming(conn)
         }
+        source.onFrame = { [weak self] pcm in
+            self?.queue.async { self?.broadcast(pcm) }
+        }
     }
 
     public func startPlaying() {
         guard !isPlaying else { return }
         isPlaying = true
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-        // 10ms packet interval matches AudioFormat.samplesPerFrame at 48kHz.
-        timer.schedule(deadline: .now(), repeating: .milliseconds(10), leeway: .milliseconds(1))
-        timer.setEventHandler { [weak self] in self?.tick() }
-        timer.resume()
-        sendTimer = timer
+        do {
+            try source.start()
+        } catch {
+            log.log("mic start failed: \(String(describing: error), privacy: .public)")
+            isPlaying = false
+            return
+        }
+        do {
+            try webServer.start()
+            let ip = LocalAddress.ipv4() ?? "localhost"
+            webURL = "http://\(ip):\(WebStreamServer.defaultPort)"
+            log.log("web URL: \(self.webURL ?? "-", privacy: .public)")
+        } catch {
+            log.log("web server start failed: \(String(describing: error), privacy: .public)")
+        }
     }
 
     public func stopPlaying() {
-        sendTimer?.cancel()
-        sendTimer = nil
+        guard isPlaying else { return }
+        source.stop()
+        webServer.stop()
+        webURL = nil
         isPlaying = false
     }
 
@@ -72,8 +88,7 @@ public final class HostSession {
 
     // MARK: - Internals
 
-    private func tick() {
-        let pcm = source.nextFrame()
+    private func broadcast(_ pcm: Data) {
         sequence &+= 1
         let packet = AudioPacket(
             sequenceNumber: sequence,
@@ -84,6 +99,7 @@ public final class HostSession {
         for client in clients.values {
             client.audio.send(packet)
         }
+        webServer.broadcast(pcm)
     }
 
     private func handleIncoming(_ conn: NWConnection) {

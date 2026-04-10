@@ -49,8 +49,6 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
     <array>
         <string>_sharedsound._tcp</string>
     </array>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>SharedSound may capture audio from this device to share with connected peers.</string>
 </dict>
 </plist>
 PLIST

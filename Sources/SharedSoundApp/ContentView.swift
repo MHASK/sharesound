@@ -59,13 +59,27 @@ struct ContentView: View {
                 session.togglePlayback()
             } label: {
                 Label(
-                    session.hostIsPlaying ? "Stop Sine Wave" : "Play 440Hz Sine Wave",
-                    systemImage: session.hostIsPlaying ? "stop.fill" : "play.fill"
+                    session.hostIsPlaying ? "Stop Sharing System Audio" : "Share System Audio",
+                    systemImage: session.hostIsPlaying ? "stop.fill" : "hifispeaker.and.homepod.fill"
                 )
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .tint(session.hostIsPlaying ? .red : .accentColor)
+
+            if let url = session.hostWebURL {
+                GroupBox("Browser guests") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Any device on this Wi-Fi can open:")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(url)
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
 
             GroupBox("Connected clients (\(session.hostConnectedClients.count))") {
                 if session.hostConnectedClients.isEmpty {
