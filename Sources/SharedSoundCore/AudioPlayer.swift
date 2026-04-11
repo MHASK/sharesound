@@ -47,6 +47,13 @@ public final class AudioPlayer {
     /// next packet picks up the new value. Default is straight stereo.
     public var channelMode: ChannelMode = .stereo
 
+    /// Whether the first buffer of this session has been anchored to a
+    /// host-time. The first call to `schedule(_:atHostTime:)` pins the
+    /// session start; every subsequent call queues back-to-back with the
+    /// previous buffer (no per-buffer timing math, so no underruns from
+    /// sub-ms wobble). Reset on stop().
+    private var primed = false
+
     public init() {
         // AVAudioEngine.mainMixerNode rejects interleaved input formats and
         // raises an NSException at connect time. Use a non-interleaved
@@ -70,6 +77,7 @@ public final class AudioPlayer {
     public func stop() {
         player.stop()
         engine.stop()
+        primed = false
     }
 
     /// Schedule a packet to render at the given mach host-time (ticks in
@@ -127,9 +135,17 @@ public final class AudioPlayer {
             }
         }
 
-        if let ticks = atHostTime {
+        // Anchor the FIRST buffer of the session to the precise host-time
+        // computed by ClientSession (gives us cross-device sample-accurate
+        // sync at session start). Every subsequent buffer is scheduled
+        // back-to-back with the previous one — no timing math, no
+        // per-buffer translation wobble, no underruns from sub-ms drift.
+        // Devices stay in lockstep via the shared start anchor + the
+        // identical packet cadence both sides see.
+        if !primed, let ticks = atHostTime {
             let when = AVAudioTime(hostTime: ticks)
             player.scheduleBuffer(buffer, at: when, options: [], completionHandler: nil)
+            primed = true
         } else {
             player.scheduleBuffer(buffer, completionHandler: nil)
         }
