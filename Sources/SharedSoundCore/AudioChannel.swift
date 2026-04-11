@@ -25,14 +25,6 @@ public enum AudioChannel {
         private let queue: DispatchQueue
         private var connections: [NWConnection] = []
 
-        // Rolling 1-second stats so we can see whether UDP audio is
-        // actually landing at the client. Without this the silence
-        // symptom is indistinguishable from "not arriving" vs "arriving
-        // but dropped by AudioPlayer".
-        private var rxPackets: Int = 0
-        private var rxBytes: Int = 0
-        private var statsTimer: DispatchSourceTimer?
-
         public init(queue: DispatchQueue) throws {
             self.queue = queue
             let params = NWParameters.udp
@@ -54,38 +46,18 @@ public enum AudioChannel {
                 }
             }
             listener.start(queue: queue)
-            startStatsTimer()
         }
 
         public func stop() {
-            statsTimer?.cancel()
-            statsTimer = nil
             listener.cancel()
             connections.forEach { $0.cancel() }
             connections.removeAll()
-        }
-
-        private func startStatsTimer() {
-            let timer = DispatchSource.makeTimerSource(queue: queue)
-            timer.schedule(deadline: .now() + .seconds(1), repeating: .seconds(1))
-            timer.setEventHandler { [weak self] in
-                guard let self else { return }
-                let p = self.rxPackets
-                let b = self.rxBytes
-                self.rxPackets = 0
-                self.rxBytes = 0
-                log.log("rx packets=\(p, privacy: .public) bytes=\(b, privacy: .public)")
-            }
-            timer.resume()
-            statsTimer = timer
         }
 
         private func receive(on conn: NWConnection) {
             conn.receiveMessage { [weak self] data, _, _, error in
                 guard let self else { return }
                 if let data, let pkt = AudioPacket.decode(data) {
-                    self.rxPackets &+= 1
-                    self.rxBytes &+= data.count
                     self.onPacket?(pkt)
                 }
                 if error == nil {

@@ -34,16 +34,6 @@ public final class ClientSession {
     private var syncTimer: DispatchSourceTimer?
     private var didReportSyncReady = false
 
-    // Rolling 1s scheduler counters. Final piece of the audio diagnostic
-    // ladder: we already log tx (host) and rx (audio receiver). This
-    // tells us what `handleAudioPacket` did with each rx'd packet —
-    // dropped because TimeSync wasn't locked, dropped because the
-    // computed play time was already in the past, or actually scheduled.
-    private var rxCount = 0
-    private var schedCount = 0
-    private var dropNotLocked = 0
-    private var dropPast = 0
-    private var schedStatsTimer: DispatchSourceTimer?
 
     /// Target end-to-end latency from capture on host to output on
     /// client, in nanoseconds. Packets that can't be scheduled to land
@@ -96,7 +86,6 @@ public final class ClientSession {
         }
         recv.start()
         self.receiver = recv
-        startSchedStatsTimer()
 
         // The listener needs a moment to bind before we can report its port.
         // Poll briefly; bail if it doesn't come up.
@@ -113,9 +102,6 @@ public final class ClientSession {
     public func disconnect() {
         syncTimer?.cancel()
         syncTimer = nil
-        schedStatsTimer?.cancel()
-        schedStatsTimer = nil
-        rxCount = 0; schedCount = 0; dropNotLocked = 0; dropPast = 0
         timeSync.reset()
         didReportSyncReady = false
         control?.send(.bye)
@@ -130,15 +116,10 @@ public final class ClientSession {
     // MARK: - Audio arrival
 
     private func handleAudioPacket(_ pkt: AudioPacket) {
-        rxCount &+= 1
-
         // Until the clock offset has locked, we don't know when to play
         // anything — drop until sync converges. This only affects the
         // first ~400ms after connect.
-        guard timeSync.isLocked else {
-            dropNotLocked &+= 1
-            return
-        }
+        guard timeSync.isLocked else { return }
 
         // Translate the host's capture timestamp into this client's
         // monotonic clock, then add the target latency. That's the wall
@@ -149,34 +130,10 @@ public final class ClientSession {
         // Drop packets that have already missed their slot — the output
         // stage cannot render them even if we tried.
         let now = HostClock.nowNanos()
-        guard playAtNanos > now else {
-            dropPast &+= 1
-            return
-        }
+        guard playAtNanos > now else { return }
 
         let playAtTicks = HostClock.hostTicks(fromNanos: playAtNanos)
         player.schedule(pkt, atHostTime: playAtTicks)
-        schedCount &+= 1
-    }
-
-    private func startSchedStatsTimer() {
-        schedStatsTimer?.cancel()
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + .seconds(1), repeating: .seconds(1))
-        timer.setEventHandler { [weak self] in
-            guard let self else { return }
-            let r = self.rxCount
-            let s = self.schedCount
-            let n = self.dropNotLocked
-            let p = self.dropPast
-            self.rxCount = 0
-            self.schedCount = 0
-            self.dropNotLocked = 0
-            self.dropPast = 0
-            log.log("sched rx=\(r, privacy: .public) sched=\(s, privacy: .public) dropNotLocked=\(n, privacy: .public) dropPast=\(p, privacy: .public)")
-        }
-        timer.resume()
-        schedStatsTimer = timer
     }
 
     // MARK: - Time sync
