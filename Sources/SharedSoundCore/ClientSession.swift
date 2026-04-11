@@ -36,23 +36,19 @@ public final class ClientSession {
 
 
     /// Target end-to-end latency from capture on host to output on
-    /// client, in nanoseconds. Packets that can't be scheduled to land
-    /// at least this far in the future are dropped.
+    /// client, in nanoseconds. Only used to anchor the FIRST buffer of
+    /// a session — after that, AudioPlayer.schedule queues packets
+    /// back-to-back via the engine's own queue, so we don't need jitter
+    /// headroom on every packet anymore. The anchor just needs enough
+    /// lead time for AVAudioEngine to actually pull the first buffer
+    /// through its render graph.
     ///
-    /// Floor breakdown on a typical Wi-Fi LAN:
-    ///   * SCStream capture chunk             ~10 ms
-    ///   * Host broadcast + net (wifi)         ~5 ms (bursty: 2–25ms p99)
-    ///   * AVAudioEngine render lookahead    ~10 ms
-    ///   * Jitter headroom (Wi-Fi spikes)    ~55 ms
-    ///   ---------------------------------------
-    ///   total                                ~80 ms
-    ///
-    /// 80 ms still feels instant ("video-lipsync" threshold is ~125 ms)
-    /// and survives a single Wi-Fi retransmit storm. We tried 35 ms — it
-    /// worked end-to-end but a single late packet caused an audible
-    /// underrun in AVAudioPlayerNode because there was zero jitter
-    /// headroom.
-    public static let targetLatencyNanos: UInt64 = 80_000_000
+    /// 25 ms is below the 50 ms "echo perception" threshold so the host
+    /// and the client(s) playing in the same room sound like a single
+    /// source, not a doubled-up echo. If you hear gaps on the first
+    /// buffer (very rare — only the first buffer can underrun now),
+    /// bump this back up; if you want even tighter, drop it.
+    public static let targetLatencyNanos: UInt64 = 25_000_000
 
     public init(peerID: UUID, localName: String) {
         self.peerID = peerID
