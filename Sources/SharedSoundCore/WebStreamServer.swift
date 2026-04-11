@@ -17,7 +17,9 @@ private let log = Logger(subsystem: "dev.sharesound", category: "web")
 /// in the WAV header (max UInt32) which is the canonical hack for streaming
 /// WAV over HTTP and is universally accepted.
 public final class WebStreamServer {
-    public static let defaultPort: UInt16 = 8080
+    // 8080 collides with Docker on a lot of dev machines; 8088 is rarely
+    // taken and still memorable.
+    public static let defaultPort: UInt16 = 8088
 
     private let port: UInt16
     private let queue = DispatchQueue(label: "sharedsound.web")
