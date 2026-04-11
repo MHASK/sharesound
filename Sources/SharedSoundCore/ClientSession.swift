@@ -39,20 +39,20 @@ public final class ClientSession {
     /// client, in nanoseconds. Packets that can't be scheduled to land
     /// at least this far in the future are dropped.
     ///
-    /// Floor breakdown on a typical LAN:
-    ///   * SCStream capture chunk           ~10 ms
-    ///   * Host broadcast + net (wifi)       ~3 ms
-    ///   * AVAudioEngine render lookahead  ~10 ms
-    ///   * Jitter headroom                 ~12 ms
-    ///   -------------------------------------
-    ///   total                              ~35 ms
+    /// Floor breakdown on a typical Wi-Fi LAN:
+    ///   * SCStream capture chunk             ~10 ms
+    ///   * Host broadcast + net (wifi)         ~5 ms (bursty: 2–25ms p99)
+    ///   * AVAudioEngine render lookahead    ~10 ms
+    ///   * Jitter headroom (Wi-Fi spikes)    ~55 ms
+    ///   ---------------------------------------
+    ///   total                                ~80 ms
     ///
-    /// Because the host gates capture on every connected client having
-    /// locked its time-sync filter (`.syncReady`), we don't need extra
-    /// slack to cover first-packet bootstrap. If you hear drops, bump
-    /// this; if you want even tighter sync and can tolerate occasional
-    /// pops, drop it.
-    public static let targetLatencyNanos: UInt64 = 35_000_000
+    /// 80 ms still feels instant ("video-lipsync" threshold is ~125 ms)
+    /// and survives a single Wi-Fi retransmit storm. We tried 35 ms — it
+    /// worked end-to-end but a single late packet caused an audible
+    /// underrun in AVAudioPlayerNode because there was zero jitter
+    /// headroom.
+    public static let targetLatencyNanos: UInt64 = 80_000_000
 
     public init(peerID: UUID, localName: String) {
         self.peerID = peerID
