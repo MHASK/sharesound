@@ -99,17 +99,18 @@ public final class SystemAudioSource: NSObject, @unchecked Sendable {
 
     // Called on `queue`.
     fileprivate func handleAudioSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
-        // PTS of the first sample in *this* chunk, in the host clock's
-        // nanosecond domain. CMClock.hostTimeClock is mach_absolute_time
-        // expressed as seconds, so CMTimeGetSeconds · 1e9 gives us a
-        // directly-comparable `HostClock.nowNanos()` value.
-        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-        let chunkStartNanos: UInt64
-        if pts.isValid && !pts.isIndefinite {
-            chunkStartNanos = UInt64(max(0, CMTimeGetSeconds(pts) * 1_000_000_000))
-        } else {
-            chunkStartNanos = HostClock.nowNanos()
-        }
+        // Use the host's mach_absolute_time at sample-buffer arrival as the
+        // capture timestamp. SCStream's PTS lives in
+        // `CMClockGetHostTimeClock()`, which is NOT bit-identical to
+        // `mach_absolute_time` on every macOS configuration — and if the
+        // two domains differ even by minutes, every translated client play
+        // time lands in the past and the scheduler drops 100% of frames
+        // (the symptom we hit). Stamping with `HostClock.nowNanos()` here
+        // gives up ~5-10 ms of "true capture instant" precision in
+        // exchange for the guarantee that the timestamp is in the SAME
+        // clock domain TimeSync was calibrated against. That's well
+        // inside our 35 ms target latency budget.
+        let chunkStartNanos = HostClock.nowNanos()
         // If the frame buffer is currently empty, anchor its start time
         // to the new chunk. Otherwise we keep the existing anchor and
         // trust that incoming chunks are contiguous (SCStream is).
