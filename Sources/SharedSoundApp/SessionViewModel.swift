@@ -46,10 +46,19 @@ final class SessionViewModel: ObservableObject {
     }
 
     // Host state
-    @Published var hostConnectedClients: [String] = []
+    struct HostListener: Identifiable, Equatable {
+        let id: UUID
+        let name: String
+        let mode: ChannelMode
+    }
+    @Published var hostListeners: [HostListener] = []
     @Published var hostIsPlaying = false
     @Published var hostIsSyncing = false
     @Published var hostWebURL: String?
+
+    func setHostListenerMode(_ id: UUID, _ mode: ChannelMode) {
+        hostSession?.setClientMode(id, mode)
+    }
 
     // Client state
     @Published var clientState: String = "Idle"
@@ -145,7 +154,7 @@ final class SessionViewModel: ObservableObject {
         discovery?.stop()
         registry.clear()
         peers = []
-        hostConnectedClients = []
+        hostListeners = []
         hostIsPlaying = false
         hostIsSyncing = false
         hostWebURL = nil
@@ -162,8 +171,11 @@ final class SessionViewModel: ObservableObject {
         if role == .host {
             let host = HostSession(hostID: localID, hostName: localName, discovery: svc)
             host.onClientsChanged = { [weak self] clients in
+                let snapshot = clients.map { c in
+                    HostListener(id: c.peerID, name: c.name, mode: c.mode)
+                }
                 Task { @MainActor in
-                    self?.hostConnectedClients = clients.map(\.name)
+                    self?.hostListeners = snapshot
                 }
             }
             host.onSyncingChanged = { [weak self] syncing in

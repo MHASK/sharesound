@@ -15,6 +15,7 @@ public final class HostSession {
         public let name: String
         public let control: ControlChannel
         public let audio: AudioChannel.Sender
+        public var mode: ChannelMode
     }
 
     public var onClientsChanged: (([ConnectedClient]) -> Void)?
@@ -32,6 +33,7 @@ public final class HostSession {
     private let webServer = WebStreamServer()
 
     private var clients: [UUID: ConnectedClient] = [:]
+    private var clientModes: [UUID: ChannelMode] = [:]
     private var pendingByConnection: [ObjectIdentifier: ControlChannel] = [:]
     private var isPlaying = false
     private var captureStarted = false
@@ -254,16 +256,23 @@ public final class HostSession {
             )
             sender.start()
 
+            let initialMode: ChannelMode = clientModes[peerID] ?? .stereo
             let client = ConnectedClient(
                 peerID: peerID,
                 name: name,
                 control: control,
-                audio: sender
+                audio: sender,
+                mode: initialMode
             )
             clients[peerID] = client
+            clientModes[peerID] = initialMode
             pendingByConnection.removeValue(forKey: ObjectIdentifier(connection))
 
             control.send(.welcome(hostID: hostID, name: hostName))
+            // Push the assigned mode immediately so a reconnecting peer
+            // resumes its previous role without the host having to
+            // re-touch the picker.
+            control.send(.setChannelMode(mode: initialMode))
             emitClients()
 
         case .bye:
@@ -294,8 +303,27 @@ public final class HostSession {
                 }
             }
 
+        case .setChannelMode:
+            break   // hosts shouldn't receive this; ignore defensively
+
         case .unknown:
             log.log("ignoring unknown control message from \(String(describing: connection.endpoint), privacy: .public)")
+        }
+    }
+
+    /// Assign (or reassign) a connected listener's channel role. Updates
+    /// local bookkeeping AND pushes a `setChannelMode` control frame to
+    /// the affected client. Safe to call from any thread.
+    public func setClientMode(_ peerID: UUID, _ mode: ChannelMode) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.clientModes[peerID] = mode
+            guard var client = self.clients[peerID] else { return }
+            client.mode = mode
+            self.clients[peerID] = client
+            client.control.send(.setChannelMode(mode: mode))
+            log.log("client \(peerID.uuidString, privacy: .public) → \(mode.rawValue, privacy: .public)")
+            self.emitClients()
         }
     }
 

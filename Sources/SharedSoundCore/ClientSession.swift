@@ -268,6 +268,11 @@ public final class ClientSession {
                     self.control?.send(.syncReady(peerID: self.peerID))
                     log.log("time sync locked, sent syncReady (offset=\(self.timeSync.offsetNanos, privacy: .public)ns rtt=\(self.timeSync.lastRttNanos, privacy: .public)ns)")
                 }
+            case .setChannelMode(let mode):
+                // Host is conducting — apply immediately. Last writer
+                // wins between this and any local picker on the client.
+                self.player.channelMode = mode
+                log.log("host assigned channel mode = \(mode.rawValue, privacy: .public)")
             default:
                 break
             }

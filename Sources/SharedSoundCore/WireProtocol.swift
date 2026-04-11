@@ -42,6 +42,12 @@ public enum ControlMessage: Codable, Sendable {
     /// playable on every listener — no initial silence.
     case syncReady(peerID: UUID)
 
+    /// Host → client. Tells the client which channel role to play in
+    /// (stereo passthrough, left only, right only, muted). Lets the
+    /// host conduct two listeners as a true L+R stereo pair across the
+    /// room. Sent on initial assignment and on every host-side change.
+    case setChannelMode(mode: ChannelMode)
+
     /// Sentinel for forward-compatible decoding: a frame with a `kind`
     /// we don't recognise (e.g. older peer, newer peer) is surfaced as
     /// `.unknown` so the caller can simply ignore it instead of the
@@ -49,11 +55,11 @@ public enum ControlMessage: Codable, Sendable {
     case unknown
 
     private enum Kind: String, Codable {
-        case hello, welcome, bye, timeSyncRequest, timeSyncResponse, syncReady
+        case hello, welcome, bye, timeSyncRequest, timeSyncResponse, syncReady, setChannelMode
     }
 
     private enum CodingKeys: String, CodingKey {
-        case kind, peerID, name, audioPort, hostID, t0, t1, t2
+        case kind, peerID, name, audioPort, hostID, t0, t1, t2, mode
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -81,6 +87,9 @@ public enum ControlMessage: Codable, Sendable {
         case .syncReady(let peerID):
             try c.encode(Kind.syncReady, forKey: .kind)
             try c.encode(peerID, forKey: .peerID)
+        case .setChannelMode(let mode):
+            try c.encode(Kind.setChannelMode, forKey: .kind)
+            try c.encode(mode, forKey: .mode)
         case .unknown:
             // Never emitted on the wire.
             break
@@ -121,6 +130,8 @@ public enum ControlMessage: Codable, Sendable {
             )
         case .syncReady:
             self = .syncReady(peerID: try c.decode(UUID.self, forKey: .peerID))
+        case .setChannelMode:
+            self = .setChannelMode(mode: try c.decode(ChannelMode.self, forKey: .mode))
         }
     }
 }

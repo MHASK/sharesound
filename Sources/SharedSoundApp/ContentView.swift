@@ -167,8 +167,11 @@ private struct HostPanel: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
-            ListenersCard(clients: session.hostConnectedClients)
-                .padding(.horizontal, 20)
+            ListenersCard(
+                listeners: session.hostListeners,
+                setMode: session.setHostListenerMode
+            )
+            .padding(.horizontal, 20)
         }
         .animation(.easeOut(duration: 0.25), value: session.hostWebURL)
     }
@@ -264,7 +267,8 @@ private struct QRTile: View {
 }
 
 private struct ListenersCard: View {
-    let clients: [String]
+    let listeners: [SessionViewModel.HostListener]
+    let setMode: (UUID, ChannelMode) -> Void
 
     var body: some View {
         Card {
@@ -275,34 +279,67 @@ private struct ListenersCard: View {
                         .foregroundStyle(.white.opacity(0.55))
                         .textCase(.uppercase)
                     Spacer()
-                    Text("\(clients.count)")
+                    Text("\(listeners.count)")
                         .font(.system(size: 12, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.55))
                         .padding(.horizontal, 8).padding(.vertical, 2)
                         .background(Capsule().fill(.white.opacity(0.1)))
                 }
 
-                if clients.isEmpty {
+                if listeners.isEmpty {
                     Text("Waiting for someone to join…")
                         .font(.system(size: 13, design: .rounded))
                         .foregroundStyle(.white.opacity(0.4))
                         .padding(.vertical, 2)
                 } else {
-                    VStack(spacing: 8) {
-                        ForEach(clients, id: \.self) { name in
-                            HStack(spacing: 10) {
-                                Image(systemName: "dot.radiowaves.left.and.right")
-                                    .foregroundStyle(Color.accentColor)
-                                Text(name)
-                                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                                    .foregroundStyle(.white.opacity(0.9))
-                                Spacer()
-                            }
+                    VStack(spacing: 12) {
+                        ForEach(listeners) { listener in
+                            ListenerRow(
+                                listener: listener,
+                                setMode: { mode in setMode(listener.id, mode) }
+                            )
                         }
                     }
                 }
             }
         }
+    }
+}
+
+private struct ListenerRow: View {
+    let listener: SessionViewModel.HostListener
+    let setMode: (ChannelMode) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: "dot.radiowaves.left.and.right")
+                    .foregroundStyle(Color.accentColor)
+                Text(listener.name)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.92))
+                Spacer()
+                Text(listener.mode.displayName)
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(Capsule().fill(.white.opacity(0.08)))
+            }
+
+            HStack(spacing: 6) {
+                ForEach(ChannelMode.allCases, id: \.self) { m in
+                    ChannelModeChip(
+                        mode: m,
+                        active: listener.mode == m,
+                        tap: { setMode(m) }
+                    )
+                }
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 12).fill(.white.opacity(0.04))
+        )
     }
 }
 
