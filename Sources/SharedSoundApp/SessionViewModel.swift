@@ -54,6 +54,20 @@ final class SessionViewModel: ObservableObject {
     // Client state
     @Published var clientState: String = "Idle"
     @Published var connectedPeerID: UUID?
+    @Published var channelMode: ChannelMode = {
+        // Persist across launches so a Mac configured as "left speaker"
+        // stays that way until you change it.
+        if let raw = UserDefaults.standard.string(forKey: "sharedsound.channelMode"),
+           let mode = ChannelMode(rawValue: raw) {
+            return mode
+        }
+        return .stereo
+    }() {
+        didSet {
+            UserDefaults.standard.set(channelMode.rawValue, forKey: "sharedsound.channelMode")
+            clientSession?.setChannelMode(channelMode)
+        }
+    }
 
     private var discovery: DiscoveryService?
     private var hostSession: HostSession?
@@ -113,6 +127,7 @@ final class SessionViewModel: ObservableObject {
             }
         }
         cs.connect(to: peer)
+        cs.setChannelMode(channelMode)
         clientSession = cs
     }
 

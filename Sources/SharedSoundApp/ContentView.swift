@@ -316,6 +316,12 @@ private struct ClientPanel: View {
             StatusPill(text: session.clientState)
                 .padding(.top, 8)
 
+            ChannelModeCard(
+                mode: session.channelMode,
+                set: { session.channelMode = $0 }
+            )
+            .padding(.horizontal, 20)
+
             if session.peers.isEmpty {
                 EmptyRadar()
                     .padding(.top, 20)
@@ -329,6 +335,85 @@ private struct ClientPanel: View {
                 .padding(.horizontal, 20)
             }
         }
+    }
+}
+
+private struct ChannelModeCard: View {
+    let mode: ChannelMode
+    let set: (ChannelMode) -> Void
+
+    var body: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("This Mac plays", systemImage: "hifispeaker.and.homepodmini")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .textCase(.uppercase)
+
+                HStack(spacing: 6) {
+                    ForEach(ChannelMode.allCases, id: \.self) { m in
+                        ChannelModeChip(
+                            mode: m,
+                            active: mode == m,
+                            tap: { set(m) }
+                        )
+                    }
+                }
+
+                Text(hint)
+                    .font(.system(size: 11, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.45))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var hint: String {
+        switch mode {
+        case .stereo:       return "Full stereo from the host."
+        case .leftChannel:  return "Acts as the LEFT speaker of a stereo pair across two Macs."
+        case .rightChannel: return "Acts as the RIGHT speaker of a stereo pair across two Macs."
+        case .muted:        return "This Mac stays silent (still in sync, just not audible)."
+        }
+    }
+}
+
+private struct ChannelModeChip: View {
+    let mode: ChannelMode
+    let active: Bool
+    let tap: () -> Void
+
+    private var icon: String {
+        switch mode {
+        case .stereo:       return "circle.lefthalf.filled.righthalf.striped.horizontal"
+        case .leftChannel:  return "l.circle.fill"
+        case .rightChannel: return "r.circle.fill"
+        case .muted:        return "speaker.slash.fill"
+        }
+    }
+
+    var body: some View {
+        Button(action: tap) {
+            VStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 16, weight: .medium))
+                Text(mode.displayName)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+            }
+            .foregroundStyle(active ? .black : .white.opacity(0.85))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(active ? Color.white : Color.white.opacity(0.06))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(.white.opacity(active ? 0 : 0.1), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: active)
     }
 }
 

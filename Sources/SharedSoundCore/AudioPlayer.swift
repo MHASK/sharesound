@@ -12,10 +12,40 @@ import AVFoundation
 ///   * sample-accurate multi-device synchronisation (all clients playing
 ///     the same host sample at the same wall-clock instant),
 ///   * automatic drop of packets that arrive too late to render.
+/// Per-client audio routing. Lets you turn one client into the "left
+/// speaker" of a stereo pair across two Macs, the "right speaker", a
+/// silent passive, or a normal stereo listener.
+public enum ChannelMode: String, Sendable, CaseIterable, Codable {
+    /// Pass the host's L/R through unchanged.
+    case stereo
+    /// Play the host's left channel on BOTH local outputs.
+    /// Use on the Mac you want to act as the left speaker.
+    case leftChannel
+    /// Play the host's right channel on BOTH local outputs.
+    /// Use on the Mac you want to act as the right speaker.
+    case rightChannel
+    /// Drop every buffer. Useful when one machine is the host and the
+    /// other is the only listener you want sound from.
+    case muted
+
+    public var displayName: String {
+        switch self {
+        case .stereo:       return "Stereo"
+        case .leftChannel:  return "Left only"
+        case .rightChannel: return "Right only"
+        case .muted:        return "Muted"
+        }
+    }
+}
+
 public final class AudioPlayer {
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private let format: AVAudioFormat
+
+    /// Routing mode applied at de-interleave time. Cheap to flip — the
+    /// next packet picks up the new value. Default is straight stereo.
+    public var channelMode: ChannelMode = .stereo
 
     public init() {
         // AVAudioEngine.mainMixerNode rejects interleaved input formats and
@@ -48,6 +78,10 @@ public final class AudioPlayer {
     /// the buffer is enqueued immediately (legacy/free-running mode —
     /// only used by tests).
     public func schedule(_ packet: AudioPacket, atHostTime: UInt64? = nil) {
+        // Muted: drop the buffer entirely. Saves CPU and the engine
+        // simply renders silence until the next non-muted packet lands.
+        if channelMode == .muted { return }
+
         let frameCapacity = AVAudioFrameCount(packet.sampleCount)
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCapacity) else {
             return
@@ -56,15 +90,40 @@ public final class AudioPlayer {
         guard let channelData = buffer.floatChannelData else { return }
         let frames = Int(frameCapacity)
         let channels = Int(AudioFormat.channelCount)
+        let mode = channelMode
 
         packet.pcm.withUnsafeBytes { raw in
             guard let src = raw.baseAddress?.assumingMemoryBound(to: Float.self) else { return }
-            // De-interleave [L0,R0,L1,R1,...] into channelData[0]=L, [1]=R.
-            for ch in 0..<channels {
-                let dst = channelData[ch]
-                for i in 0..<frames {
-                    dst[i] = src[i * channels + ch]
+            switch mode {
+            case .stereo:
+                // De-interleave [L0,R0,L1,R1,...] → planar L / R.
+                for ch in 0..<channels {
+                    let dst = channelData[ch]
+                    for i in 0..<frames {
+                        dst[i] = src[i * channels + ch]
+                    }
                 }
+            case .leftChannel:
+                // Host L → both local outputs (mono from L source).
+                let dstL = channelData[0]
+                let dstR = channels > 1 ? channelData[1] : channelData[0]
+                for i in 0..<frames {
+                    let v = src[i * channels + 0]
+                    dstL[i] = v
+                    dstR[i] = v
+                }
+            case .rightChannel:
+                // Host R → both local outputs (mono from R source).
+                let dstL = channelData[0]
+                let dstR = channels > 1 ? channelData[1] : channelData[0]
+                let rIdx = channels > 1 ? 1 : 0
+                for i in 0..<frames {
+                    let v = src[i * channels + rIdx]
+                    dstL[i] = v
+                    dstR[i] = v
+                }
+            case .muted:
+                break   // unreachable, returned above
             }
         }
 
