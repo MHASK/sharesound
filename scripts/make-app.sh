@@ -53,8 +53,47 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-# Ad-hoc codesign so TCC can key permissions to this bundle.
-codesign --force --deep --sign - "$APP_DIR" >/dev/null
+# --- stable codesign identity ----------------------------------------------
+# Why we don't ad-hoc sign: ad-hoc (`--sign -`) bakes the binary's cdhash into
+# the designated requirement, which changes on every rebuild. macOS TCC for
+# Screen Recording keys grants on the DR, so every rebuild = "new app" =
+# re-prompt + stale prior grant.
+#
+# Pick the most stable identity available, in order of preference:
+#   1. SHAREDSOUND_SIGN_IDENTITY env var (manual override)
+#   2. "Developer ID Application: …"   (Apple-issued, ideal)
+#   3. "Apple Development: …"          (Apple-issued, also fine)
+#   4. ad-hoc fallback (will re-prompt every build)
+pick_identity() {
+    if [[ -n "${SHAREDSOUND_SIGN_IDENTITY:-}" ]]; then
+        echo "$SHAREDSOUND_SIGN_IDENTITY"
+        return
+    fi
+    local listing
+    listing=$(security find-identity -p codesigning -v 2>/dev/null || true)
+    local pick
+    pick=$(echo "$listing" | grep -o '"Developer ID Application:[^"]*"' | head -1 | tr -d '"')
+    if [[ -z "$pick" ]]; then
+        pick=$(echo "$listing" | grep -o '"Apple Development:[^"]*"' | head -1 | tr -d '"')
+    fi
+    echo "$pick"
+}
+
+SIGN_IDENTITY=$(pick_identity)
+
+if [[ -n "$SIGN_IDENTITY" ]]; then
+    echo "→ codesign with: $SIGN_IDENTITY"
+    codesign --force --deep \
+        --sign "$SIGN_IDENTITY" \
+        --identifier dev.sharesound.SharedSound \
+        --options runtime \
+        "$APP_DIR" >/dev/null
+else
+    echo "→ no stable identity found — ad-hoc signing (TCC will re-prompt on every rebuild)"
+    codesign --force --deep --sign - \
+        --identifier dev.sharesound.SharedSound \
+        "$APP_DIR" >/dev/null
+fi
 
 echo "→ built $APP_DIR"
 echo "→ launching…"
