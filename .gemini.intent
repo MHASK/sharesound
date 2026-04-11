@@ -1,0 +1,1 @@
+Added 1-second rolling tx counters to HostSession.broadcast/startStatsTimer and rx counters to AudioChannel.Receiver to isolate where audio is lost: capture-side (silent SCStream) vs transport (UDP not arriving) vs scheduling (TimeSync drops). isSilent() samples Float32s to flag emitting-but-zero frames.

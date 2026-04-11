@@ -40,6 +40,14 @@ public final class HostSession {
     private var syncTimeoutWork: DispatchWorkItem?
     private var sequence: UInt32 = 0
 
+    // Rolling 1-second broadcast stats. Logs how many wire frames we're
+    // sending to clients + web listeners per second, so we can tell
+    // whether the host is actually capturing sound (vs a silent SCStream
+    // that looks "started" but emits nothing).
+    private var txFrames: Int = 0
+    private var txSilentFrames: Int = 0
+    private var statsTimer: DispatchSourceTimer?
+
     /// Max time we'll hold the host back waiting on a client to sync
     /// before starting capture anyway. Covers the case of a misbehaving
     /// or very-slow client that never sends `.syncReady`.
@@ -96,6 +104,10 @@ public final class HostSession {
             source.stop()
             captureStarted = false
         }
+        statsTimer?.cancel()
+        statsTimer = nil
+        txFrames = 0
+        txSilentFrames = 0
         webServer.stop()
         webURL = nil
         isPlaying = false
@@ -112,6 +124,7 @@ public final class HostSession {
         do {
             try source.start()
             captureStarted = true
+            startStatsTimer()
             log.log("capture started")
         } catch {
             log.log("capture start failed: \(String(describing: error), privacy: .public)")
@@ -168,6 +181,43 @@ public final class HostSession {
             client.audio.send(packet)
         }
         webServer.broadcast(pcm)
+        txFrames &+= 1
+        if isSilent(pcm) { txSilentFrames &+= 1 }
+    }
+
+    private func isSilent(_ pcm: Data) -> Bool {
+        // Cheap check: scan a handful of Float32 samples spread across the
+        // buffer. If they're all bit-equal to zero, treat the frame as
+        // silent. Catches "SCStream is running but emitting nothing".
+        return pcm.withUnsafeBytes { raw -> Bool in
+            let count = raw.count / MemoryLayout<Float>.size
+            guard count > 0 else { return true }
+            let floats = raw.bindMemory(to: Float.self)
+            let stride = max(1, count / 16)
+            var i = 0
+            while i < count {
+                if floats[i] != 0 { return false }
+                i += stride
+            }
+            return true
+        }
+    }
+
+    private func startStatsTimer() {
+        statsTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + .seconds(1), repeating: .seconds(1))
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            let f = self.txFrames
+            let s = self.txSilentFrames
+            let n = self.clients.count
+            self.txFrames = 0
+            self.txSilentFrames = 0
+            log.log("tx frames=\(f, privacy: .public) silent=\(s, privacy: .public) clients=\(n, privacy: .public)")
+        }
+        timer.resume()
+        statsTimer = timer
     }
 
     private func handleIncoming(_ conn: NWConnection) {
